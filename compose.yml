@@ -1,0 +1,36 @@
+services:
+
+  api-gateway:
+    build: api-gateway/
+    ports: 
+    - "8080:8080"
+    restart: always
+    volumes:
+      - ./api-gateway/src/main/resources/static/index.html:/project/src/main/resources/static/index.html
+      - ./api-gateway/target/classes/static/index.html:/project/target/classes/static/index.html
+    depends_on:
+      - core-service
+
+  core-service:
+    build: core-service/
+    ports: 
+    - "8081:8081"
+    restart: always
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:15
+    restart : always
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+    - "5433:5432"
+    environment:
+      - POSTGRES_USER=coreuser
+      - POSTGRES_PASSWORD=corepass
+      - POSTGRES_DB=coredb
+
+networks:
+  default:

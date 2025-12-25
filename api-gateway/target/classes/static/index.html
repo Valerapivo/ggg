@@ -1,0 +1,1930 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>СУБД - Управление рудными месторождениями</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f8f9fa;
+        }
+        .table-wrap {
+            max-height: 520px;
+            overflow: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+        }
+        .data-table {
+            font-size: 0.9rem;
+            margin-bottom: 0;
+        }
+        .data-table th {
+            position: sticky;
+            top: 0;
+            background-color: #343a40;
+            color: white;
+            z-index: 10;
+        }
+        .section-title {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .card {
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            margin-bottom: 20px;
+        }
+        .editable {
+            background-color: #fff3cd !important;
+            cursor: pointer;
+            border: 1px solid #ffc107 !important;
+        }
+        .editable:hover {
+            background-color: #ffeaa7 !important;
+        }
+        .new-row {
+            background-color: #d4edda !important;
+        }
+        .report-params {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h3 class="mb-0">📊 СУБД - Управление рудными месторождениями</h3>
+                            <p class="text-muted mb-0">Система управления горнодобывающими операциями</p>
+                        </div>
+                        <div class="text-end">
+                            <span id="userRoleLabel" class="badge bg-primary fs-6 me-3"></span>
+                            <button class="btn btn-outline-danger" onclick="logout()">
+                                <i class="bi bi-box-arrow-right"></i> Выйти
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="section-title">Основное меню</h5>
+                    <select id="menuSelect" class="form-select form-select-lg" onchange="onMenuChange(this)">
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="contentArea" class="row">
+    </div>
+</div>
+
+<script>
+    const API_BASE_URL = "http://10.0.87.27:8080/api";
+    const CORE_BASE_URL = "http://10.0.87.27:8081/api";
+    
+    const ALL_TABLES = [
+        "ore_deposits", "minerals", "buyers_companies", "deposit_owner",
+        "reserves", "sales_to_companies", "work_shifts", "mining_teams",
+        "shift_production", "miners", "teams", "team_names"
+    ];
+
+    const USER_FORBIDDEN_TABLES = ["deposit_owner", "mining_teams", "miners", "teams", "team_names"];
+
+    const USER_VIEWS = [
+        "view_deposits_summary",
+        "view_reserves_details", 
+        "view_sales_report",
+        "view_production_daily",
+        "view_team_performance",
+        "view_mineral_prices"
+    ];
+
+    const EDITABLE_VIEWS = [
+        "view_production_daily", 
+        "view_sales_report"
+    ];
+
+    const VIEW_TO_TABLE_MAP = {
+        "view_production_daily": "shift_production",
+        "view_sales_report": "sales_to_companies"
+    };
+
+    const ONE_TO_MANY_RELATIONS = [
+    { 
+        base: "ore_deposits", 
+        baseDisplayName: "Месторождения",
+        baseIdField: "id",
+        baseNameField: "name",
+        childTable: "reserves", 
+        childDisplayName: "Запасы месторождений",
+        childFk: "ore_deposit_id", 
+        childPk: "id" 
+    },
+    { 
+        base: "minerals", 
+        baseDisplayName: "Минералы",
+        baseIdField: "id",
+        baseNameField: "name",
+        childTable: "reserves", 
+        childDisplayName: "Запасы минералов",
+        childFk: "mineral_id", 
+        childPk: "id" 
+    },
+    { 
+        base: "minerals", 
+        baseDisplayName: "Минералы",
+        baseIdField: "id",
+        baseNameField: "name",
+        childTable: "sales_to_companies", 
+        childDisplayName: "Продажи минералов",
+        childFk: "mineral_id", 
+        childPk: "id" 
+    },
+    { 
+        base: "buyers_companies", 
+        baseDisplayName: "Компании-покупатели",
+        baseIdField: "id",
+        baseNameField: "name",
+        childTable: "sales_to_companies", 
+        childDisplayName: "Продажи компании",
+        childFk: "buyer_id", 
+        childPk: "id" 
+    },
+    { 
+        base: "work_shifts", 
+        baseDisplayName: "Рабочие смены",
+        baseIdField: "id",
+        baseNameField: "shift_date",
+        childTable: "shift_production", 
+        childDisplayName: "Производство за смену",
+        childFk: "shift_id", 
+        childPk: "id" 
+    },
+    { 
+        base: "mining_teams", 
+        baseDisplayName: "Горнодобывающие команды",
+        baseIdField: "id",
+        baseNameField: "foreman_name",
+        childTable: "work_shifts", 
+        childDisplayName: "Смены команды",
+        childFk: "mining_team_id", 
+        childPk: "id" 
+    }
+];
+
+    // Реальные отчеты из бэкенда
+// Реальные отчеты из бэкенда
+const REAL_REPORTS = [
+    { 
+        id: "monthly-production", 
+        name: "Ежемесячная добыча по месторождениям",
+        params: [
+            { name: "year", type: "number", label: "Год", placeholder: "2024" },
+            { name: "month", type: "number", label: "Месяц", placeholder: "1-12", optional: true }
+        ]
+    },
+    { 
+        id: "sales-by-mineral", 
+        name: "Продажи по видам минералов",
+        params: [
+            { name: "from", type: "date", label: "Начальная дата" },
+            { name: "to", type: "date", label: "Конечная дата" }
+        ]
+    },
+    { 
+        id: "reserves-status", 
+        name: "Статус запасов",
+        params: [
+            { 
+                name: "isConfirmed", 
+                type: "select", 
+                label: "Статус подтверждения",
+                options: [
+                    { value: "", label: "Все" },
+                    { value: "true", label: "Подтвержденные" },
+                    { value: "false", label: "Неподтвержденные" }
+                ]
+            }
+        ]
+    },
+    { 
+        id: "infrastructure-report", 
+        name: "Отчет по инфраструктуре месторождений",
+        params: [
+            { name: "q", type: "text", label: "Поиск", placeholder: "Название или населенный пункт", optional: true }
+        ]
+    },
+    { 
+        id: "team-efficiency", 
+        name: "Эффективность работы горнодобывающих команд",
+        params: [
+            { name: "year", type: "number", label: "Год", placeholder: "2024" },
+            { name: "month", type: "number", label: "Месяц", placeholder: "1-12" }
+        ]
+    },
+    { 
+        id: "buyer-statistics", 
+        name: "Статистика по покупателям",
+        params: [
+            { name: "from", type: "date", label: "Начальная дата" },
+            { name: "to", type: "date", label: "Конечная дата" }
+        ]
+    },
+    { 
+        id: "discovery-timeline", 
+        name: "Хронология открытия месторождений",
+        params: [] // Без параметров
+    },
+    { 
+        id: "equipment-damage", 
+        name: "Отчет о повреждениях оборудования",
+        params: [
+            { name: "from", type: "date", label: "Начальная дата", optional: true },
+            { name: "to", type: "date", label: "Конечная дата", optional: true }
+        ]
+    }
+];
+
+    let currentUser = null;
+    let currentTableName = null;
+    let currentTableData = [];
+    let modifiedRows = new Set();
+    let newRows = new Set();
+
+    async function initApp() {
+        try {
+            const resp = await axios.get(`${API_BASE_URL}/me`);
+            const data = resp.data;
+            const roles = data.roles.map(r => r.authority);
+            currentUser = {
+                username: data.username,
+                role: roles.includes("ROLE_ADMIN") ? "ADMIN" : "USER"
+            };
+            
+            document.getElementById("userRoleLabel").innerText = 
+                `${currentUser.username} (${currentUser.role === "ADMIN" ? "Администратор" : "Пользователь"})`;
+            
+            initMenu();
+        } catch (e) {
+            console.error("Ошибка инициализации:", e);
+            alert("Ошибка подключения к серверу. Проверьте соединение.");
+        }
+    }
+
+    function initMenu() {
+        const menu = document.getElementById("menuSelect");
+        menu.innerHTML = "";
+
+        const options = currentUser.role === "ADMIN" 
+            ? [
+                "Управление таблицами",
+                "Связи один-ко-многим"
+            ]
+            : [
+                "Просмотр данных (представления)",
+                "Связи один-ко-многим",
+                "Генерация отчетов",
+                "Ввод данных через представления"
+            ];
+
+        options.forEach(option => {
+            const opt = document.createElement("option");
+            opt.value = option;
+            opt.textContent = option;
+            menu.appendChild(opt);
+        });
+
+        onMenuChange();
+    }
+
+    function onMenuChange() {
+        const val = document.getElementById("menuSelect").value;
+        
+        switch(val) {
+            case "Управление таблицами":
+                showTablesView();
+                break;
+            case "Просмотр данных (представления)":
+                showViewsView();
+                break;
+            case "Связи один-ко-многим":
+                showRelationsView();
+                break;
+            case "Генерация отчетов":
+                showReportsView();
+                break;
+            case "Ввод данных через представления":
+                showDataInputView();
+                break;
+        }
+    }
+
+    function showTablesView() {
+        const content = document.getElementById("contentArea");
+        const defaultTable = "ore_deposits";
+        currentTableName = defaultTable;
+
+        content.innerHTML = `
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-8">
+                                <h5 class="section-title">Управление таблицами базы данных</h5>
+                            </div>
+                            <div class="col-md-4">
+                                <select id="tableSelect" class="form-select" onchange="loadTable(this.value)">
+                                    ${ALL_TABLES.map(table => 
+                                        `<option value="${table}" ${table === defaultTable ? 'selected' : ''}>
+                                            ${getTableDisplayName(table)}
+                                        </option>`
+                                    ).join('')}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <button class="btn btn-success w-100 mb-2" onclick="saveCurrentTable()">
+                                    Сохранить изменения
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-primary w-100 mb-2" onclick="addRow()">
+                                    Добавить запись
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-danger w-100 mb-2" onclick="deleteSelectedRow()">
+                                    Удалить выбранное
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="table-wrap bg-white">
+                            <div id="tableContainer" class="p-3"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        loadTable(defaultTable);
+    }
+
+    function showViewsView() {
+        const content = document.getElementById("contentArea");
+        const defaultView = USER_VIEWS[0];
+
+        content.innerHTML = `
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-8">
+                                <h5 class="section-title">Просмотр данных (режим пользователя)</h5>
+                            </div>
+                            <div class="col-md-4">
+                                <select id="viewSelect" class="form-select" onchange="loadView(this.value)">
+                                    ${USER_VIEWS.map(view => 
+                                        `<option value="${view}" ${view === defaultView ? 'selected' : ''}>
+                                            ${getViewDisplayName(view)}
+                                        </option>`
+                                    ).join('')}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="input-group">
+                                    <span class="input-group-text">🔍</span>
+                                    <input type="text" id="searchInput" class="form-control" 
+                                           placeholder="Быстрый поиск..." oninput="filterTable()">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="table-wrap bg-white">
+                            <div id="viewContainer" class="p-3"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        loadView(defaultView);
+    }
+
+    async function loadTable(tableName) {
+        const container = document.getElementById("tableContainer");
+        currentTableName = tableName;
+        
+        modifiedRows.clear();
+        newRows.clear();
+        
+        container.innerHTML = "<div class='text-center p-5'><div class='spinner-border'></div><p class='mt-2'>Загрузка данных...</p></div>";
+        
+        try {
+            const resp = await axios.get(`${CORE_BASE_URL}/tables/${tableName}`);
+            renderTable(container, resp.data, true);
+        } catch (error) {
+            console.error("Ошибка загрузки:", error);
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    <h5>Ошибка загрузки данных</h5>
+                    <p>${error.response?.data || error.message}</p>
+                </div>
+            `;
+        }
+    }
+
+    async function loadView(viewName) {
+        const container = document.getElementById("viewContainer");
+        currentTableName = viewName;
+        container.innerHTML = "<div class='text-center p-5'><div class='spinner-border'></div><p class='mt-2'>Загрузка данных...</p></div>";
+        
+        try {
+            const resp = await axios.get(`${CORE_BASE_URL}/views/${viewName}`);
+            renderTable(container, resp.data, false);
+        } catch (e) {
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    <h5>Ошибка загрузки представления</h5>
+                    <p>${e.message}</p>
+                </div>
+            `;
+        }
+    }
+
+    function renderTable(container, data, editable) {
+        currentTableData = data;
+        modifiedRows.clear();
+        newRows.clear();
+        
+        if (!data || data.length === 0) {
+            container.innerHTML = "<div class='alert alert-info'>Нет данных для отображения</div>";
+            return;
+        }
+
+        const headers = Object.keys(data[0]);
+        
+        let html = `
+            <table class="table table-hover table-striped data-table">
+                <thead>
+                    <tr>
+                        ${editable ? '<th style="width: 50px;">#</th>' : ''}
+                        ${headers.map(h => `<th>${getColumnDisplayName(h)}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        data.forEach((row, index) => {
+            const rowId = row.id || index;
+            const isNew = rowId.toString().startsWith('new_');
+            html += `<tr data-id="${rowId}" ${isNew ? 'class="new-row"' : ''}>`;
+            
+            if (editable) {
+                html += `<td><input type="checkbox" class="row-selector" data-id="${rowId}"></td>`;
+            }
+            
+            headers.forEach(col => {
+                const value = row[col];
+                const displayValue = formatValue(value);
+                
+                if (editable && col !== "id") {
+                    html += `<td class="editable" contenteditable="true" data-col="${col}" 
+                              oninput="markRowAsModified('${rowId}')">${displayValue}</td>`;
+                } else {
+                    html += `<td>${displayValue}</td>`;
+                }
+            });
+            
+            html += `</tr>`;
+        });
+
+        html += `</tbody></table>`;
+        container.innerHTML = html;
+    }
+
+    function markRowAsModified(rowId) {
+        modifiedRows.add(rowId);
+    }
+
+    function addRow() {
+        if (!currentTableName) return;
+        
+        const container = document.getElementById("tableContainer");
+        const table = container.querySelector('table');
+        if (!table) return;
+        
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        
+        const headers = Array.from(table.querySelectorAll('thead th'))
+            .map(th => th.textContent.trim())
+            .filter(h => h !== '#');
+        
+        const newRowId = 'new_' + Date.now();
+        const newRow = document.createElement('tr');
+        newRow.setAttribute('data-id', newRowId);
+        newRow.className = 'new-row';
+        
+        const checkboxCell = document.createElement('td');
+        checkboxCell.innerHTML = `<input type="checkbox" class="row-selector" data-id="${newRowId}">`;
+        newRow.appendChild(checkboxCell);
+        
+        headers.forEach((header, index) => {
+            const cell = document.createElement('td');
+            const colName = getColumnNameFromDisplay(header);
+            
+            if (colName !== 'id') {
+                cell.setAttribute('contenteditable', 'true');
+                cell.setAttribute('data-col', colName);
+                cell.className = 'editable';
+                cell.textContent = '';
+                
+                cell.addEventListener('input', function() {
+                    markRowAsModified(newRowId);
+                });
+            } else {
+                cell.textContent = 'новая';
+                cell.className = 'text-muted fst-italic';
+            }
+            
+            newRow.appendChild(cell);
+        });
+        
+        tbody.appendChild(newRow);
+        newRows.add(newRowId);
+    }
+
+    async function saveCurrentTable() {
+    if (!currentTableName) {
+        alert("Таблица не выбрана");
+        return;
+    }
+
+    try {
+        const updates = [];
+        const creates = [];
+        const container = document.getElementById("tableContainer");
+        
+        const table = container.querySelector('table');
+        if (!table) {
+            alert("Таблица не найдена");
+            return;
+        }
+        
+        const rows = table.querySelectorAll('tbody tr');
+        
+        // Собираем данные из таблицы
+        rows.forEach((row) => {
+            const rowId = row.getAttribute('data-id');
+            const isNew = rowId && rowId.startsWith('new_');
+            const rowData = {};
+            
+            // Собираем данные из редактируемых ячеек
+            row.querySelectorAll('td[contenteditable="true"]').forEach(cell => {
+                const col = cell.getAttribute('data-col');
+                let value = cell.textContent.trim();
+                
+                // Конвертируем пустые строки в null
+                if (value === '') {
+                    value = null;
+                } 
+                // Конвертируем "Да"/"Нет" в boolean
+                else if (value === 'Да') {
+                    value = true;
+                } else if (value === 'Нет') {
+                    value = false;
+                }
+                // Пробуем конвертировать числа
+                else if (!isNaN(value) && value !== '') {
+                    // Проверяем, целое ли число или дробное
+                    if (value.includes('.')) {
+                        value = parseFloat(value);
+                    } else {
+                        value = parseInt(value);
+                    }
+                }
+                
+                rowData[col] = value;
+            });
+            
+            if (isNew && Object.keys(rowData).length > 0) {
+                creates.push(rowData);
+            } else if (!isNew && modifiedRows.has(rowId) && Object.keys(rowData).length > 0) {
+                rowData.id = parseInt(rowId); // Преобразуем ID в число
+                updates.push(rowData);
+            }
+        });
+        
+        // Собираем ID для удаления
+        const checkboxes = container.querySelectorAll('.row-selector:checked');
+        const deletes = [];
+        for (const checkbox of checkboxes) {
+            const rowId = checkbox.getAttribute('data-id');
+            if (!rowId.startsWith('new_') && rowId) {
+                deletes.push(parseInt(rowId));
+            }
+        }
+        
+        // Выполняем все операции
+        const results = {
+            created: 0,
+            updated: 0,
+            deleted: 0
+        };
+        
+        // Удаление
+        for (const id of deletes) {
+            try {
+                const response = await axios.delete(`${CORE_BASE_URL}/tables/${currentTableName}/${id}`);
+                if (response.data.success) {
+                    results.deleted++;
+                } else {
+                    throw new Error(`Ошибка при удалении ID ${id}`);
+                }
+            } catch (error) {
+                console.error("Ошибка удаления:", error);
+                throw new Error(`Не удалось удалить запись с ID ${id}: ${error.response?.data || error.message}`);
+            }
+        }
+        
+        // Обновление существующих записей
+        for (const data of updates) {
+            try {
+                const response = await axios.put(`${CORE_BASE_URL}/tables/${currentTableName}/${data.id}`, data);
+                if (response.data.success) {
+                    results.updated++;
+                } else {
+                    throw new Error(`Ошибка при обновлении ID ${data.id}`);
+                }
+            } catch (error) {
+                console.error("Ошибка обновления:", error);
+                throw new Error(`Не удалось обновить запись с ID ${data.id}: ${error.response?.data || error.message}`);
+            }
+        }
+        
+        // Создание новых записей
+        for (const data of creates) {
+            try {
+                const response = await axios.post(`${CORE_BASE_URL}/tables/${currentTableName}`, data);
+                if (response.data.success) {
+                    results.created++;
+                } else {
+                    throw new Error("Ошибка при создании записи");
+                }
+            } catch (error) {
+                console.error("Ошибка создания:", error);
+                throw new Error(`Не удалось создать запись: ${error.response?.data || error.message}`);
+            }
+        }
+        
+        // Очищаем списки изменений
+        modifiedRows.clear();
+        newRows.clear();
+        
+        // Показываем результат
+        let message = "✅ Изменения успешно сохранены!\n";
+        if (results.created > 0) message += `• Создано записей: ${results.created}\n`;
+        if (results.updated > 0) message += `• Обновлено записей: ${results.updated}\n`;
+        if (results.deleted > 0) message += `• Удалено записей: ${results.deleted}\n`;
+        
+        alert(message);
+        
+        // Перезагружаем таблицу
+        await loadTable(currentTableName);
+        
+    } catch (error) {
+        console.error("Ошибка сохранения:", error);
+        alert("❌ Ошибка при сохранении:\n" + error.message);
+    }
+}
+    async function deleteSelectedRow() {
+        const container = document.getElementById("tableContainer");
+        const checkboxes = container.querySelectorAll('.row-selector:checked');
+        
+        if (checkboxes.length === 0) {
+            alert("Выберите записи для удаления");
+            return;
+        }
+        
+        if (confirm(`Удалить выбранные записи (${checkboxes.length})?`)) {
+            try {
+                for (const checkbox of checkboxes) {
+                    const rowId = checkbox.getAttribute('data-id');
+                    const row = checkbox.closest('tr');
+                    
+                    if (rowId && rowId.startsWith('new_')) {
+                        row.remove();
+                        newRows.delete(rowId);
+                    } else if (rowId) {
+                        await axios.delete(`${CORE_BASE_URL}/tables/${currentTableName}/${rowId}`);
+                        row.remove();
+                    }
+                }
+                
+                alert(`Удалено записей: ${checkboxes.length}`);
+                loadTable(currentTableName);
+                
+            } catch (error) {
+                console.error("Ошибка при удалении:", error);
+                alert(`Ошибка при удалении: ${error.response?.data?.message || error.message}`);
+            }
+        }
+    }
+
+    function showRelationsView() {
+    const content = document.getElementById("contentArea");
+    
+    content.innerHTML = `
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="section-title">Связи один-ко-многим</h5>
+                    <p class="text-muted mb-4">Выберите тип связи для просмотра иерархических данных</p>
+                    
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">Тип связи:</label>
+                            <select id="relationSelect" class="form-select" onchange="loadRelation(this.value)">
+                                <option value="">${ONE_TO_MANY_RELATIONS[0]}</option>
+                                ${ONE_TO_MANY_RELATIONS.map(rel => 
+                                    `<option value="${rel.base}:${rel.childTable}">
+                                        ${rel.baseDisplayName} → ${rel.childDisplayName}
+                                    </option>`
+                                ).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-5">
+                            <div class="card h-100">
+                                <div class="card-header bg-primary text-white">
+                                    <i class="bi bi-box-arrow-in-down"></i> 
+                                    <span id="parentTitle">Основная таблица</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-wrap" style="height: 450px;">
+                                        <table class="table table-hover mb-0" id="parentTable">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>ID</th>
+                                                    <th>Название</th>
+                                                    <th style="width: 80px;">Действие</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="parentContainer">
+                                                <tr>
+                                                    <td colspan="3" class="text-center text-muted">
+                                                        Выберите тип связи
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="card-footer">
+                                    <small class="text-muted" id="parentCount">Записей: 0</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-7">
+                            <div class="card h-100">
+                                <div class="card-header bg-success text-white">
+                                    <i class="bi bi-box-arrow-in-right"></i> 
+                                    <span id="childTitle">Связанные данные</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-wrap" style="height: 450px;">
+                                        <table class="table table-hover mb-0" id="childTable">
+                                            <thead class="table-light">
+                                                <tr id="childHeaders">
+                                                    <th>ID</th>
+                                                    <th>Данные</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="childContainer">
+                                                <tr>
+                                                    <td colspan="2" class="text-center text-muted">
+                                                        Выберите запись из основной таблицы
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="card-footer">
+                                    <small class="text-muted" id="childCount">Связанных записей: 0</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+async function loadRelation(relationKey) {
+    if (!relationKey) {
+        document.getElementById("parentContainer").innerHTML = `
+            <tr>
+                <td colspan="3" class="text-center text-muted">
+                    Выберите тип связи
+                </td>
+            </tr>
+        `;
+        document.getElementById("childContainer").innerHTML = `
+            <tr>
+                <td colspan="2" class="text-center text-muted">
+                    Выберите запись из основной таблицы
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    const [baseTable, childTable] = relationKey.split(':');
+    const relation = ONE_TO_MANY_RELATIONS.find(r => 
+        r.base === baseTable && r.childTable === childTable
+    );
+    
+    if (!relation) return;
+
+    try {
+        // Обновляем заголовки
+        document.getElementById("parentTitle").textContent = relation.baseDisplayName;
+        document.getElementById("childTitle").textContent = relation.childDisplayName;
+        
+        // Загружаем родительские данные
+        const parentResp = await axios.get(`${CORE_BASE_URL}/tables/${relation.base}`);
+        const parentData = parentResp.data;
+        
+        const parentContainer = document.getElementById("parentContainer");
+        
+        if (!parentData || parentData.length === 0) {
+            parentContainer.innerHTML = `
+                <tr>
+                    <td colspan="3" class="text-center text-muted">
+                        Нет данных в таблице ${relation.baseDisplayName}
+                    </td>
+                </tr>
+            `;
+            document.getElementById("parentCount").textContent = "Записей: 0";
+            return;
+        }
+        
+        parentContainer.innerHTML = parentData.map(item => `
+            <tr class="parent-row" data-id="${item[relation.baseIdField]}" 
+                onclick="selectParentRow(this, ${item[relation.baseIdField]}, '${relation.childTable}', '${relation.childFk}')"
+                style="cursor: pointer;">
+                <td>${item[relation.baseIdField]}</td>
+                <td>${formatValue(item[relation.baseNameField])}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary"
+                            onclick="event.stopPropagation(); loadChildData('${relation.childTable}', '${relation.childFk}', ${item[relation.baseIdField]})">
+                        Показать
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+        
+        document.getElementById("parentCount").textContent = `Записей: ${parentData.length}`;
+        
+        // Автоматически выбираем первую запись
+        if (parentData.length > 0) {
+            const firstRow = parentContainer.querySelector('.parent-row');
+            const firstId = parentData[0][relation.baseIdField];
+            selectParentRow(firstRow, firstId, relation.childTable, relation.childFk);
+            await loadChildData(relation.childTable, relation.childFk, firstId);
+        }
+        
+    } catch (error) {
+        console.error("Ошибка загрузки связи:", error);
+        document.getElementById("parentContainer").innerHTML = `
+            <tr>
+                <td colspan="3" class="text-center text-danger">
+                    Ошибка загрузки: ${error.message}
+                </td>
+            </tr>
+        `;
+        document.getElementById("parentCount").textContent = "Ошибка загрузки";
+    }
+}
+
+function selectParentRow(rowElement, parentId, childTable, fkColumn) {
+    // Снимаем выделение со всех строк
+    document.querySelectorAll('.parent-row').forEach(row => {
+        row.classList.remove('table-primary');
+    });
+    
+    // Выделяем текущую строку
+    rowElement.classList.add('table-primary');
+    
+    // Загружаем дочерние данные
+    loadChildData(childTable, fkColumn, parentId);
+}
+
+async function loadChildData(childTable, fkColumn, parentId) {
+    const childContainer = document.getElementById("childContainer");
+    const childHeaders = document.getElementById("childHeaders");
+    
+    childContainer.innerHTML = `
+        <tr>
+            <td colspan="2" class="text-center">
+                <div class="spinner-border spinner-border-sm"></div>
+                Загрузка связанных данных...
+            </td>
+        </tr>
+    `;
+    
+    try {
+        // Загружаем дочерние данные
+        const resp = await axios.get(`${CORE_BASE_URL}/tables/${childTable}/filter`, {
+            params: { 
+                column: fkColumn, 
+                value: parentId 
+            }
+        });
+        
+        const childData = resp.data;
+        
+        if (!childData || childData.length === 0) {
+            childContainer.innerHTML = `
+                <tr>
+                    <td colspan="2" class="text-center text-muted">
+                        Нет связанных записей
+                    </td>
+                </tr>
+            `;
+            document.getElementById("childCount").textContent = "Связанных записей: 0";
+            return;
+        }
+        
+        // Получаем заголовки из первой записи
+        const headers = Object.keys(childData[0]);
+        
+        // Обновляем заголовки таблицы
+        childHeaders.innerHTML = headers.map(h => 
+            `<th>${getColumnDisplayName(h)}</th>`
+        ).join('');
+        
+        // Отображаем данные
+        childContainer.innerHTML = childData.map(row => `
+            <tr>
+                ${headers.map(h => `
+                    <td>${formatChildValue(row[h], h)}</td>
+                `).join('')}
+            </tr>
+        `).join('');
+        
+        document.getElementById("childCount").textContent = `Связанных записей: ${childData.length}`;
+        
+    } catch (error) {
+        console.error("Ошибка загрузки дочерних данных:", error);
+        childContainer.innerHTML = `
+            <tr>
+                <td colspan="2" class="text-center text-danger">
+                    Ошибка загрузки: ${error.message}
+                </td>
+            </tr>
+        `;
+        document.getElementById("childCount").textContent = "Ошибка загрузки";
+    }
+}
+
+function formatChildValue(value, columnName) {
+    if (value === null || value === undefined) return '<span class="text-muted">—</span>';
+    
+    // Особые форматы для определенных колонок
+    if (columnName === 'is_confirmed' || columnName === 'equipment_damaged' || columnName === 'is_active') {
+        return value ? 
+            '<span class="badge bg-success">Да</span>' : 
+            '<span class="badge bg-danger">Нет</span>';
+    }
+    
+    if (columnName.includes('date')) {
+        try {
+            return new Date(value).toLocaleDateString('ru-RU');
+        } catch {
+            return value;
+        }
+    }
+    
+    if (columnName.includes('price') || columnName.includes('amount')) {
+        return parseFloat(value).toLocaleString('ru-RU', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }) + ' ₽';
+    }
+    
+    if (columnName.includes('tons') || columnName.includes('volume')) {
+        return parseFloat(value).toLocaleString('ru-RU', {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1
+        }) + ' т';
+    }
+    
+    return formatValue(value);
+}
+
+    // ==================== РЕАЛЬНЫЕ ОТЧЕТЫ ====================
+    function showReportsView() {
+        const content = document.getElementById("contentArea");
+        const defaultReport = REAL_REPORTS[0];
+        
+        content.innerHTML = `
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="section-title">Генерация отчетов</h5>
+                        <p class="text-muted mb-4">Выберите тип отчета и укажите параметры для формирования</p>
+                        
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Тип отчета:</label>
+                                <select id="reportType" class="form-select" onchange="updateReportFilters()">
+                                    ${REAL_REPORTS.map(report => 
+                                        `<option value="${report.id}">${report.name}</option>`
+                                    ).join('')}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="report-params" id="reportFilters">
+                            <!-- Фильтры загружаются динамически -->
+                        </div>
+                        
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <button class="btn btn-primary w-100" onclick="generateRealReport()">
+                                    Сформировать отчет
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="table-wrap bg-white" id="reportResultContainer">
+                            <div class="p-3 text-center text-muted">
+                                Выберите параметры и нажмите "Сформировать отчет"
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        updateReportFilters();
+    }
+
+    function updateReportFilters() {
+        const reportType = document.getElementById("reportType").value;
+        const report = REAL_REPORTS.find(r => r.id === reportType);
+        const filtersContainer = document.getElementById("reportFilters");
+        
+        if (!report || !report.params) {
+            filtersContainer.innerHTML = '<p class="text-muted">Дополнительные параметры не требуются</p>';
+            return;
+        }
+        
+        let filtersHTML = '<div class="row g-3">';
+        
+        report.params.forEach((param, index) => {
+            filtersHTML += `
+                <div class="col-md-${report.params.length > 2 ? '4' : '6'}">
+                    <label class="form-label">${param.label}${param.optional ? ' (опционально)' : ''}</label>
+            `;
+            
+            if (param.type === 'select') {
+                filtersHTML += `
+                    <select id="${param.name}" class="form-select">
+                        ${param.options.map(opt => 
+                            `<option value="${opt.value}">${opt.label}</option>`
+                        ).join('')}
+                    </select>
+                `;
+            } else if (param.type === 'date') {
+                const today = new Date().toISOString().split('T')[0];
+                const defaultDate = param.name === 'from' ? 
+                    new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0] : 
+                    today;
+                filtersHTML += `
+                    <input type="date" id="${param.name}" class="form-control" value="${defaultDate}">
+                `;
+            } else if (param.type === 'number') {
+                const currentYear = new Date().getFullYear();
+                const defaultValue = param.name === 'year' ? currentYear : 
+                                   param.name === 'month' ? new Date().getMonth() + 1 : '';
+                filtersHTML += `
+                    <input type="number" id="${param.name}" class="form-control" 
+                           placeholder="${param.placeholder || ''}" value="${defaultValue}">
+                `;
+            } else {
+                filtersHTML += `
+                    <input type="text" id="${param.name}" class="form-control" 
+                           placeholder="${param.placeholder || ''}">
+                `;
+            }
+            
+            filtersHTML += `</div>`;
+        });
+        
+        filtersHTML += '</div>';
+        filtersContainer.innerHTML = filtersHTML;
+    }
+
+    async function generateRealReport() {
+        const reportType = document.getElementById("reportType").value;
+        const container = document.getElementById("reportResultContainer");
+        const report = REAL_REPORTS.find(r => r.id === reportType);
+        
+        container.innerHTML = "<div class='text-center p-5'><div class='spinner-border'></div><p class='mt-2'>Формирование отчета...</p></div>";
+        
+        try {
+            // Собираем параметры
+            const params = {};
+            if (report.params) {
+                report.params.forEach(param => {
+                    const element = document.getElementById(param.name);
+                    if (element) {
+                        const value = element.value.trim();
+                        if (value !== '' || param.optional) {
+                            if (param.type === 'number') {
+                                params[param.name] = parseInt(value);
+                            } else if (param.type === 'boolean') {
+                                params[param.name] = value === 'true';
+                            } else {
+                                params[param.name] = value;
+                            }
+                        }
+                    }
+                });
+            }
+            
+            console.log("Запрос отчета:", reportType, "с параметрами:", params);
+            
+            // Делаем запрос к бэкенду
+            const response = await axios.get(`${CORE_BASE_URL}/reports/${reportType}`, {
+                params: params
+            });
+            
+            const data = response.data;
+            
+            if (!data || data.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-info">
+                        <h6>Нет данных для отображения</h6>
+                        <p>По выбранным параметрам данных не найдено.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Формируем заголовок с параметрами
+            let title = report.name;
+            if (Object.keys(params).length > 0) {
+                const paramText = Object.entries(params)
+                    .map(([key, value]) => {
+                        const paramLabel = report.params?.find(p => p.name === key)?.label || key;
+                        return `${paramLabel}: ${value}`;
+                    })
+                    .join(', ');
+                title += ` (${paramText})`;
+            }
+            
+            container.innerHTML = `
+                <div class="p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0">${title}</h6>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="exportToExcel()">
+                            Экспорт в Excel
+                        </button>
+                    </div>
+                    ${renderRealReportTable(data)}
+                    <div class="mt-3 text-end text-muted">
+                        <small>Всего записей: ${data.length}</small>
+                    </div>
+                </div>
+            `;
+            
+        } catch (error) {
+            console.error("Ошибка формирования отчета:", error);
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    <h5>Ошибка формирования отчета</h5>
+                    <p>${error.response?.data?.message || error.response?.data || error.message}</p>
+                    <p class="mt-2"><small>Проверьте правильность введенных параметров и доступность сервера.</small></p>
+                    <button class="btn btn-sm btn-secondary mt-2" onclick="generateRealReport()">
+                        Попробовать снова
+                    </button>
+                </div>
+            `;
+        }
+    }
+
+    function renderRealReportTable(data) {
+        if (!data || data.length === 0) {
+            return '<div class="alert alert-info">Нет данных для отображения</div>';
+        }
+        
+        const headers = Object.keys(data[0]);
+        
+        // Определяем, какие столбцы содержат числа для форматирования
+        const numericColumns = headers.filter(header => {
+            return data.some(row => {
+                const val = row[header];
+                return typeof val === 'number' || 
+                       (typeof val === 'string' && !isNaN(parseFloat(val)) && isFinite(val));
+            });
+        });
+        
+        let html = `
+            <table class="table table-bordered table-hover">
+                <thead class="table-light">
+                    <tr>
+                        ${headers.map(h => `<th>${formatReportColumnName(h)}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        
+        data.forEach((row, rowIndex) => {
+            html += `<tr>`;
+            headers.forEach(header => {
+                let value = row[header];
+                let displayValue = '';
+                
+                if (value === null || value === undefined) {
+                    displayValue = '-';
+                } else if (numericColumns.includes(header)) {
+                    // Форматируем числа
+                    const num = parseFloat(value);
+                    if (!isNaN(num)) {
+                        if (header.includes('price') || header.includes('revenue') || header.includes('amount')) {
+                            // Денежные значения
+                            displayValue = num.toLocaleString('ru-RU', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                            }) + ' ₽';
+                        } else if (header.includes('tons') || header.includes('volume') || header.includes('production')) {
+                            // Тонны
+                            displayValue = num.toLocaleString('ru-RU', {
+                                minimumFractionDigits: 1,
+                                maximumFractionDigits: 1
+                            }) + ' т';
+                        } else if (num === Math.floor(num)) {
+                            // Целые числа
+                            displayValue = num.toLocaleString('ru-RU');
+                        } else {
+                            // Дробные числа
+                            displayValue = num.toLocaleString('ru-RU', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                            });
+                        }
+                    } else {
+                        displayValue = value;
+                    }
+                } else if (typeof value === 'boolean') {
+                    displayValue = value ? 'Да' : 'Нет';
+                } else if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/)) {
+                    // Дата
+                    displayValue = new Date(value).toLocaleDateString('ru-RU');
+                } else {
+                    displayValue = value;
+                }
+                
+                html += `<td>${displayValue}</td>`;
+            });
+            html += `</tr>`;
+        });
+        
+        html += `</tbody></table>`;
+        return html;
+    }
+
+    function formatReportColumnName(column) {
+        const names = {
+            'deposit_name': 'Месторождение',
+            'mineral_name': 'Минерал',
+            'shifts_count': 'Количество смен',
+            'total_production': 'Всего добыто',
+            'avg_production_per_shift': 'Средняя добыча за смену',
+            'month': 'Месяц',
+            'sales_count': 'Количество продаж',
+            'total_sold_tons': 'Всего продано тонн',
+            'avg_price': 'Средняя цена',
+            'total_revenue': 'Общая выручка',
+            'first_sale_date': 'Первая продажа',
+            'last_sale_date': 'Последняя продажа',
+            'absolute_volume': 'Объем запасов',
+            'is_confirmed': 'Подтверждено',
+            'survey_year': 'Год исследования',
+            'status': 'Статус',
+            'has_railroad': 'Ж/д сообщение',
+            'has_power_supply': 'Электроснабжение',
+            'nearby_settlement': 'Ближайший населенный пункт',
+            'team_name': 'Название команды',
+            'foreman_name': 'Бригадир',
+            'working_days': 'Рабочих дней',
+            'avg_daily_production': 'Средняя дневная добыча',
+            'avg_shift_production': 'Средняя добыча за смену',
+            'incidents_count': 'Количество инцидентов',
+            'company_name': 'Компания',
+            'contact_name': 'Контактное лицо',
+            'contact_phone': 'Контактный телефон',
+            'purchase_count': 'Количество покупок',
+            'total_purchased_tons': 'Всего куплено тонн',
+            'total_spent': 'Всего потрачено',
+            'avg_price_paid': 'Средняя цена покупки',
+            'first_purchase_date': 'Первая покупка',
+            'last_purchase_date': 'Последняя покупка',
+            'year': 'Год',
+            'month_number': 'Месяц'
+        };
+        
+        return names[column] || column.replace(/_/g, ' ');
+    }
+
+    function exportToExcel() {
+        const table = document.querySelector('#reportResultContainer table');
+        if (!table) {
+            alert('Нет данных для экспорта');
+            return;
+        }
+        
+        let csv = [];
+        const rows = table.querySelectorAll('tr');
+        
+        for (let i = 0; i < rows.length; i++) {
+            const row = [], cols = rows[i].querySelectorAll('td, th');
+            
+            for (let j = 0; j < cols.length; j++) {
+                // Убираем символы валюты и единицы измерения для чистых чисел
+                let data = cols[j].textContent.trim();
+                data = data.replace(/[₽т]/g, '').trim();
+                row.push(data);
+            }
+            
+            csv.push(row.join(';'));
+        }
+        
+        const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + csv.join('\n');
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `отчет_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // ==================== ВВОД ДАННЫХ ЧЕРЕЗ ПРЕДСТАВЛЕНИЯ ====================
+    function showDataInputView() {
+        const content = document.getElementById("contentArea");
+        const editableView = EDITABLE_VIEWS[0];
+        
+        content.innerHTML = `
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="section-title">Ввод данных через представления</h5>
+                        <p class="text-muted mb-4">Редактируйте любые данные в таблицах</p>
+                        
+                        <div class="row mb-4">
+                            <div class="col-md-8">
+                                <h6 class="mb-2">Выберите представление для редактирования:</h6>
+                                <select id="editableViewSelect" class="form-select" onchange="loadEditableView(this.value)">
+                                    ${EDITABLE_VIEWS.map(view => 
+                                        `<option value="${view}">${getViewDisplayName(view)}</option>`
+                                    ).join('')}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <button class="btn btn-primary w-100 mb-2" onclick="addRowToEditableView()">
+                                    Добавить новую запись
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-success w-100 mb-2" onclick="saveEditableViewChanges()">
+                                    Сохранить всё
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-danger w-100 mb-2" onclick="deleteSelectedFromView()">
+                                    Удалить выбранное
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-info">
+                            <small>ℹ️ Кликните по любой ячейке чтобы редактировать. Все изменения будут сохранены при нажатии "Сохранить всё"</small>
+                        </div>
+                        
+                        <div class="table-wrap bg-white">
+                            <div id="editableViewContainer" class="p-3"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        loadEditableView(editableView);
+    }
+
+    async function loadEditableView(viewName) {
+        const container = document.getElementById("editableViewContainer");
+        currentTableName = viewName;
+        
+        modifiedRows.clear();
+        newRows.clear();
+        
+        container.innerHTML = "<div class='text-center p-5'><div class='spinner-border'></div><p class='mt-2'>Загрузка данных...</p></div>";
+        
+        try {
+            const resp = await axios.get(`${CORE_BASE_URL}/views/${viewName}`);
+            renderEditableView(container, resp.data);
+        } catch (error) {
+            console.error("Ошибка загрузки:", error);
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    <h5>Ошибка загрузки представления</h5>
+                    <p>${error.response?.data || error.message}</p>
+                </div>
+            `;
+        }
+    }
+
+    function renderEditableView(container, data) {
+        currentTableData = data || [];
+        modifiedRows.clear();
+        newRows.clear();
+        
+        if (!data || data.length === 0) {
+            container.innerHTML = `
+                <div class="alert alert-info">
+                    <h6>Нет данных для отображения</h6>
+                    <p>Нажмите "Добавить новую запись", чтобы создать первую запись.</p>
+                </div>
+            `;
+            return;
+        }
+
+        const headers = Object.keys(data[0]);
+        
+        let html = `
+            <table class="table table-hover table-striped data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        ${headers.map(h => `<th>${getColumnDisplayName(h)}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        data.forEach((row, index) => {
+            const rowId = row.id || `row_${index}`;
+            html += `<tr data-id="${rowId}">`;
+            
+            html += `<td><input type="checkbox" class="row-selector form-check-input" data-id="${rowId}"></td>`;
+            
+            headers.forEach(col => {
+                const value = row[col];
+                const displayValue = formatValue(value);
+                
+                html += `<td class="editable" contenteditable="true" data-col="${col}" 
+                          oninput="markRowAsModified('${rowId}')">${displayValue}</td>`;
+            });
+            
+            html += `</tr>`;
+        });
+
+        html += `</tbody></table>`;
+        container.innerHTML = html;
+    }
+
+    function addRowToEditableView() {
+        if (!currentTableName) {
+            alert("Сначала выберите представление");
+            return;
+        }
+        
+        const container = document.getElementById("editableViewContainer");
+        let table = container.querySelector('table');
+        
+        if (!table) {
+            const structure = {
+                "view_production_daily": ["id", "shift_id", "shift_date", "start_time", "end_time", "foreman_name", "tons_of_ore", "equipment_damaged", "notes"],
+                "view_sales_report": ["id", "buyer_id", "buyer_name", "ore_deposit_id", "deposit_name", "mineral_id", "mineral_name", "sale_date", "sold_tons", "sale_price_per_ton", "total_amount"]
+            };
+            
+            const headers = structure[currentTableName] || [];
+            
+            let html = `
+                <table class="table table-hover table-striped data-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            ${headers.map(h => `<th>${getColumnDisplayName(h)}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            `;
+            
+            container.innerHTML = html;
+            table = container.querySelector('table');
+        }
+        
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        
+        const headers = Array.from(table.querySelectorAll('thead th'))
+            .map(th => th.textContent.trim())
+            .filter((h, i) => i > 0);
+        
+        const newRowId = 'new_' + Date.now();
+        const newRow = document.createElement('tr');
+        newRow.setAttribute('data-id', newRowId);
+        newRow.className = 'new-row';
+        
+        const checkboxCell = document.createElement('td');
+        checkboxCell.innerHTML = `<input type="checkbox" class="row-selector form-check-input" data-id="${newRowId}">`;
+        newRow.appendChild(checkboxCell);
+        
+        headers.forEach((header) => {
+            const cell = document.createElement('td');
+            const colName = getColumnNameFromDisplay(header);
+            
+            cell.setAttribute('contenteditable', 'true');
+            cell.setAttribute('data-col', colName);
+            cell.className = 'editable';
+            cell.textContent = '';
+            
+            cell.addEventListener('input', () => markRowAsModified(newRowId));
+            
+            newRow.appendChild(cell);
+        });
+        
+        tbody.appendChild(newRow);
+        newRows.add(newRowId);
+    }
+
+    async function saveEditableViewChanges() {
+    if (!currentTableName) {
+        alert("Представление не выбрано");
+        return;
+    }
+
+    const container = document.getElementById("editableViewContainer");
+    if (!container) {
+        alert("Контейнер не найден");
+        return;
+    }
+
+    try {
+        const table = container.querySelector('table');
+        if (!table) {
+            alert("Таблица не найдена");
+            return;
+        }
+
+        const rows = table.querySelectorAll('tbody tr');
+        const updates = [];
+        const creates = [];
+        const deletes = [];
+
+        // Собираем данные
+        rows.forEach((row) => {
+            const rowId = row.getAttribute('data-id');
+            const isNew = rowId && rowId.startsWith('new_');
+            const rowData = {};
+            
+            // Собираем данные из редактируемых ячеек
+            row.querySelectorAll('td[contenteditable="true"]').forEach(cell => {
+                const col = cell.getAttribute('data-col');
+                let value = cell.textContent.trim();
+                
+                // Конвертируем пустые строки в null
+                if (value === '') {
+                    value = null;
+                } 
+                // Конвертируем "Да"/"Нет" в boolean
+                else if (value === 'Да') {
+                    value = true;
+                } else if (value === 'Нет') {
+                    value = false;
+                }
+                // Пробуем конвертировать числа
+                else if (!isNaN(value) && value !== '') {
+                    if (value.includes('.')) {
+                        value = parseFloat(value);
+                    } else {
+                        value = parseInt(value);
+                    }
+                }
+                
+                rowData[col] = value;
+            });
+
+            if (isNew && Object.keys(rowData).length > 0) {
+                creates.push(rowData);
+            } else if (!isNew && modifiedRows.has(rowId) && Object.keys(rowData).length > 0) {
+                // Ищем ID в таблице данных
+                const existingRow = currentTableData.find(r => 
+                    r.id == rowId || r.id.toString() === rowId
+                );
+                if (existingRow && existingRow.id) {
+                    rowData.id = existingRow.id;
+                    updates.push(rowData);
+                }
+            }
+        });
+
+        // Собираем ID для удаления
+        const checkboxes = container.querySelectorAll('.row-selector:checked');
+        checkboxes.forEach(checkbox => {
+            const rowId = checkbox.getAttribute('data-id');
+            if (!rowId.startsWith('new_') && rowId) {
+                // Ищем ID в таблице данных
+                const existingRow = currentTableData.find(r => 
+                    r.id == rowId || r.id.toString() === rowId
+                );
+                if (existingRow && existingRow.id) {
+                    deletes.push(existingRow.id);
+                }
+            }
+        });
+
+        // Определяем базовую таблицу
+        const baseTable = VIEW_TO_TABLE_MAP[currentTableName];
+        if (!baseTable) {
+            throw new Error("Неизвестная базовая таблица для этого представления");
+        }
+
+        const results = {
+            created: 0,
+            updated: 0,
+            deleted: 0
+        };
+
+        // Удаление
+        for (const id of deletes) {
+            try {
+                const response = await axios.delete(`${CORE_BASE_URL}/tables/${baseTable}/${id}`);
+                if (response.data.success) {
+                    results.deleted++;
+                } else {
+                    throw new Error(`Ошибка при удалении ID ${id}`);
+                }
+            } catch (error) {
+                console.error("Ошибка удаления:", error);
+                throw new Error(`Не удалось удалить запись с ID ${id}: ${error.response?.data || error.message}`);
+            }
+        }
+
+        // Обновление
+        for (const data of updates) {
+            try {
+                const response = await axios.put(`${CORE_BASE_URL}/tables/${baseTable}/${data.id}`, data);
+                if (response.data.success) {
+                    results.updated++;
+                } else {
+                    throw new Error(`Ошибка при обновлении ID ${data.id}`);
+                }
+            } catch (error) {
+                console.error("Ошибка обновления:", error);
+                throw new Error(`Не удалось обновить запись с ID ${data.id}: ${error.response?.data || error.message}`);
+            }
+        }
+
+        // Создание
+        for (const data of creates) {
+            try {
+                const response = await axios.post(`${CORE_BASE_URL}/tables/${baseTable}`, data);
+                if (response.data.success) {
+                    results.created++;
+                } else {
+                    throw new Error("Ошибка при создании записи");
+                }
+            } catch (error) {
+                console.error("Ошибка создания:", error);
+                throw new Error(`Не удалось создать запись: ${error.response?.data || error.message}`);
+            }
+        }
+
+        modifiedRows.clear();
+        newRows.clear();
+
+        // Показываем результат
+        let message = "✅ Изменения успешно сохранены!\n";
+        if (results.created > 0) message += `• Создано записей: ${results.created}\n`;
+        if (results.updated > 0) message += `• Обновлено записей: ${results.updated}\n`;
+        if (results.deleted > 0) message += `• Удалено записей: ${results.deleted}\n`;
+        
+        if (results.created === 0 && results.updated === 0 && results.deleted === 0) {
+            message = "ℹ️ Нет изменений для сохранения";
+        }
+        
+        alert(message);
+        
+        // Перезагружаем представление
+        await loadEditableView(currentTableName);
+        
+    } catch (error) {
+        console.error("Ошибка сохранения:", error);
+        alert("❌ Ошибка при сохранении:\n" + error.message);
+    }
+}    function deleteSelectedFromView() {
+        const container = document.getElementById("editableViewContainer");
+        const checkboxes = container.querySelectorAll('.row-selector:checked');
+        
+        if (checkboxes.length === 0) {
+            alert("Выберите записи для удаления");
+            return;
+        }
+        
+        if (confirm(`Удалить выбранные записи (${checkboxes.length})?`)) {
+            checkboxes.forEach(checkbox => {
+                const rowId = checkbox.getAttribute('data-id');
+                const row = checkbox.closest('tr');
+                if (row) {
+                    row.remove();
+                }
+            });
+        }
+    }
+
+    // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+    function getTableDisplayName(tableName) {
+        const names = {
+            'ore_deposits': 'Месторождения',
+            'minerals': 'Минералы',
+            'buyers_companies': 'Компании-покупатели',
+            'deposit_owner': 'Владельцы месторождений',
+            'reserves': 'Запасы',
+            'sales_to_companies': 'Продажи',
+            'work_shifts': 'Рабочие смены',
+            'mining_teams': 'Горнодобывающие команды',
+            'shift_production': 'Производство за смену',
+            'miners': 'Шахтеры',
+            'teams': 'Команды',
+            'team_names': 'Названия команд'
+        };
+        return names[tableName] || tableName;
+    }
+
+    function getViewDisplayName(viewName) {
+        const names = {
+            'view_deposits_summary': 'Сводка по месторождениям',
+            'view_reserves_details': 'Детали запасов',
+            'view_sales_report': 'Отчет по продажам',
+            'view_production_daily': 'Дневная добыча',
+            'view_team_performance': 'Производительность команд',
+            'view_mineral_prices': 'Цены на минералы'
+        };
+        return names[viewName] || viewName;
+    }
+
+    function getColumnDisplayName(column) {
+        const names = {
+            'id': 'ID',
+            'name': 'Название',
+            'status': 'Статус',
+            'discovery_year': 'Год открытия',
+            'latitude': 'Широта',
+            'longtitude': 'Долгота',
+            'has_railroad': 'Ж/д сообщение',
+            'has_power_supply': 'Электроснабжение',
+            'nearby_settlement': 'Ближайший населенный пункт',
+            'absolute_volume': 'Объем запасов',
+            'is_confirmed': 'Подтверждено',
+            'sale_date': 'Дата продажи',
+            'sold_tons': 'Продано тонн',
+            'sale_price_per_ton': 'Цена за тонну',
+            'shift_date': 'Дата смены',
+            'start_time': 'Время начала',
+            'end_time': 'Время окончания',
+            'foreman_name': 'Имя бригадира',
+            'foreman_phone': 'Телефон бригадира',
+            'is_active': 'Активен',
+            'tons_of_ore': 'Тонн руды',
+            'equipment_damaged': 'Оборудование повреждено',
+            'notes': 'Примечания',
+            'license_number': 'Номер лицензии',
+            'contact_name': 'Контактное лицо',
+            'contact_phone': 'Контактный телефон',
+            'acquisition_year': 'Год приобретения',
+            'expiration_year': 'Год окончания',
+            'shift_id': 'ID смены',
+            'buyer_id': 'ID покупателя',
+            'owner_id': 'ID продавца',
+            'longitude': 'Долгота',
+            'buyer_name': 'Название компании',
+            'ore_deposit_id': 'ID месторождения',
+            'deposit_name': 'Название месторождения',
+            'mineral_id': 'ID минерала',
+            'mineral_name': 'Название минерала',
+            'total_amount': 'Общая сумма'
+        };
+        return names[column] || column.replace(/_/g, ' ');
+    }
+
+    function getColumnNameFromDisplay(displayName) {
+        const mapping = {
+            'ID': 'id',
+            'Название': 'name',
+            'Статус': 'status',
+            'Год открытия': 'discovery_year',
+            'Широта': 'latitude',
+            'Долгота': 'longtitude',
+            'Ж/д сообщение': 'has_railroad',
+            'Электроснабжение': 'has_power_supply',
+            'Ближайший населенный пункт': 'nearby_settlement',
+            'Объем запасов': 'absolute_volume',
+            'Подтверждено': 'is_confirmed',
+            'Дата продажи': 'sale_date',
+            'Продано тонн': 'sold_tons',
+            'Цена за тонну': 'sale_price_per_ton',
+            'Дата смены': 'shift_date',
+            'Время начала': 'start_time',
+            'Время окончания': 'end_time',
+            'Имя бригадира': 'foreman_name',
+            'Телефон бригадира': 'foreman_phone',
+            'Активен': 'is_active',
+            'Тонн руды': 'tons_of_ore',
+            'Оборудование повреждено': 'equipment_damaged',
+            'Примечания': 'notes',
+            'Номер лицензии': 'license_number',
+            'Контактное лицо': 'contact_name',
+            'Контактный телефон': 'contact_phone',
+            'Год приобретения': 'acquisition_year',
+            'Год окончания': 'expiration_year',
+            'ID смены': 'shift_id',
+            'ID покупателя': 'buyer_id',
+            'ID продавца': 'owner_id',
+            'Долгота': 'longitude',
+            'Название компании': 'buyer_name',
+            'ID месторождения': 'ore_deposit_id',
+            'Название месторождения': 'deposit_name',
+            'ID минерала': 'mineral_id',
+            'Название минерала': 'mineral_name',
+            'Общая сумма': 'total_amount'
+        };  
+        return mapping[displayName] || displayName.toLowerCase().replace(/ /g, '_');
+    }
+
+    function formatValue(value) {
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'boolean') return value ? 'Да' : 'Нет';
+        if (typeof value === 'number') {
+            return Number(value).toString();
+        }
+        return value.toString();
+    }
+
+    function filterTable() {
+        const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+        const table = document.querySelector('.data-table');
+        if (!table) return;
+        
+        const rows = table.querySelectorAll('tbody tr');
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchTerm) ? '' : 'none';
+        });
+    }
+
+    function logout() {
+        window.location.href = "/logout";
+    }
+
+    document.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>
