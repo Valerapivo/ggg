@@ -54,6 +54,21 @@
             border-radius: 5px;
             margin-bottom: 20px;
         }
+        #filterBody {
+    background-color: #f8f9fa !important;
+}
+#filterBody input {
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+}
+#filterBody input:focus {
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.2rem rgba(13,110,253,.25);
+}
+.data-table tbody tr:hover {
+    background-color: rgba(0,0,0,.075);
+}
     </style>
 </head>
 <body>
@@ -475,55 +490,80 @@ const REAL_REPORTS = [
     }
 
     function renderTable(container, data, editable) {
-        currentTableData = data;
-        modifiedRows.clear();
-        newRows.clear();
-        
-        if (!data || data.length === 0) {
-            container.innerHTML = "<div class='alert alert-info'>Нет данных для отображения</div>";
-            return;
-        }
-
-        const headers = Object.keys(data[0]);
-        
-        let html = `
-            <table class="table table-hover table-striped data-table">
-                <thead>
-                    <tr>
-                        ${editable ? '<th style="width: 50px;">#</th>' : ''}
-                        ${headers.map(h => `<th>${getColumnDisplayName(h)}</th>`).join('')}
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-
-        data.forEach((row, index) => {
-            const rowId = row.id || index;
-            const isNew = rowId.toString().startsWith('new_');
-            html += `<tr data-id="${rowId}" ${isNew ? 'class="new-row"' : ''}>`;
-            
-            if (editable) {
-                html += `<td><input type="checkbox" class="row-selector" data-id="${rowId}"></td>`;
-            }
-            
-            headers.forEach(col => {
-                const value = row[col];
-                const displayValue = formatValue(value);
-                
-                if (editable && col !== "id") {
-                    html += `<td class="editable" contenteditable="true" data-col="${col}" 
-                              oninput="markRowAsModified('${rowId}')">${displayValue}</td>`;
-                } else {
-                    html += `<td>${displayValue}</td>`;
-                }
-            });
-            
-            html += `</tr>`;
-        });
-
-        html += `</tbody></table>`;
-        container.innerHTML = html;
+    currentTableData = data;
+    modifiedRows.clear();
+    newRows.clear();
+    
+    if (!data || data.length === 0) {
+        container.innerHTML = '<div class="alert alert-info"><strong>Пусто</strong><br>Нет данных для отображения</div>';
+        return;
     }
+
+    const headers = Object.keys(data[0]);
+    const visibleHeaders = headers.filter(h => editable ? h !== 'id' : true);
+
+    let html = `
+        <table class="table table-hover table-striped data-table" id="mainTable">
+            <thead class="table-dark">
+                <tr>
+                    ${editable ? '<th style="width: 50px;">#</th>' : ''}
+    `;
+    
+    // 🔥 ЗАГОЛОВКИ
+    visibleHeaders.forEach(col => {
+        html += `<th>${getColumnDisplayName(col)}</th>`;
+    });
+    
+    html += `</tr></thead>`;
+
+    // 🔥 СТРОКА ПОИСКА ПО СТОЛБЦАМ
+    html += `
+        <tbody class="bg-light" id="filterBody">
+            <tr>
+                ${editable ? '<td></td>' : ''}
+    `;
+    
+    visibleHeaders.forEach(h => {
+        html += `<td><input type="text" class="form-control form-control-sm column-filter" data-col="${h}" placeholder="🔍" oninput="applyColumnFilters(this.closest('table'))"></td>`;
+    });
+    html += `</tr></tbody>`;
+
+    // 🔥 ДАННЫЕ (ТЕПЕРЬ ПРАВИЛЬНО!)
+    html += `<tbody id="dataBody">`;
+    data.forEach((row, index) => {
+        const rowId = row.id || index;
+        const isNew = rowId.toString().startsWith('new');
+        html += `<tr data-id="${rowId}" ${isNew ? 'class="new-row"' : ''}>`;
+        
+        if (editable) {
+            html += `<td><input type="checkbox" class="row-selector" data-id="${rowId}"></td>`;
+        }
+        
+        // 🔥 ЯЧЕЙКИ ДАННЫХ - ТОЛЬКО ЗДЕСЬ!
+        visibleHeaders.forEach(col => {
+            const value = row[col];
+            const displayValue = formatValue(value);
+            if (editable && col !== 'id') {
+                html += `<td class="editable" contenteditable="true" data-col="${col}" oninput="markRowAsModified('${rowId}')">${displayValue}</td>`;
+            } else {
+                html += `<td data-col="${col}">${displayValue}</td>`;
+            }
+        });
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // 🔥 ПОДКЛЮЧЕНИЕ ФИЛЬТРОВ
+    const table = container.querySelector('#mainTable');
+    if (table) {
+        table.querySelectorAll('.column-filter').forEach(input => {
+            input.addEventListener('input', () => applyColumnFilters(table));
+        });
+    }
+}
+
 
     function markRowAsModified(rowId) {
         modifiedRows.add(rowId);
@@ -903,10 +943,6 @@ async function loadRelation(relationKey) {
                 <td>${item[relation.baseIdField]}</td>
                 <td>${formatValue(item[relation.baseNameField])}</td>
                 <td>
-                    <button class="btn btn-sm btn-outline-primary"
-                            onclick="event.stopPropagation(); loadChildData('${relation.childTable}', '${relation.childFk}', ${item[relation.baseIdField]})">
-                        Показать
-                    </button>
                 </td>
             </tr>
         `).join('');
@@ -1780,6 +1816,42 @@ function formatChildValue(value, columnName) {
         }
     }
 
+    function applyColumnFilters(table) {
+    const filters = {};
+    table.querySelectorAll('.column-filter').forEach(inp => {
+        const col = inp.getAttribute('data-col');
+        if (col) {
+            filters[col] = inp.value.toLowerCase();
+        }
+    });
+
+    const dataBody = table.querySelector('#dataBody');
+    if (!dataBody) return;
+    
+    const rows = dataBody.querySelectorAll('tr[data-id]');
+    
+    rows.forEach(tr => {
+        let visible = true;
+        
+        Object.keys(filters).forEach(colName => {
+            const filterVal = filters[colName];
+            if (filterVal) {
+                const td = tr.querySelector(`td[data-col="${colName}"]`);
+                if (td) {
+                    const cellText = td.textContent.toLowerCase().trim();
+                    if (!cellText.includes(filterVal)) {
+                        visible = false;
+                        return;
+                    }
+                }
+            }
+        });
+        
+        tr.style.display = visible ? '' : 'none';
+    });
+}
+
+
     // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
     function getTableDisplayName(tableName) {
         const names = {
@@ -1925,6 +1997,7 @@ function formatChildValue(value, columnName) {
     }
 
     document.addEventListener('DOMContentLoaded', initApp);
+
 </script>
 </body>
 </html>
